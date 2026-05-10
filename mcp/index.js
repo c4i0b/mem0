@@ -1,137 +1,179 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import pg from "pg";
 
-const MEM0_API = process.env.MEM0_API_URL || "http://localhost:8888";
+const OLLAMA_BASE = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+const EMBED_MODEL = process.env.EMBED_MODEL || "nomic-embed-text";
+const EMBED_DIMS = parseInt(process.env.EMBED_DIMS || "768", 10);
+const PG_HOST = process.env.POSTGRES_HOST || "localhost";
+const PG_PORT = parseInt(process.env.POSTGRES_PORT || "5432", 10);
+const PG_USER = process.env.POSTGRES_USER || "postgres";
+const PG_PASSWORD = process.env.POSTGRES_PASSWORD || "postgres";
+const PG_DB = process.env.POSTGRES_DB || "postgres";
+const PG_TABLE = process.env.POSTGRES_TABLE || "memories";
 
-async function mem0Fetch(path, opts = {}) {
-  const url = `${MEM0_API}${path}`;
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-    ...opts,
+const pool = new pg.Pool({
+  host: PG_HOST,
+  port: PG_PORT,
+  user: PG_USER,
+  password: PG_PASSWORD,
+  database: PG_DB,
+});
+
+async function ensureTable() {
+  await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE TABLE IF NOT EXISTS "${PG_TABLE}" (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      vector vector(${EMBED_DIMS}),
+      payload JSONB NOT NULL DEFAULT '{}'
+    );
+  `);
+}
+
+async function embed(text) {
+  const res = await fetch(`${OLLAMA_BASE}/api/embed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: EMBED_MODEL, input: text }),
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Mem0 API ${res.status}: ${text}`);
-  }
-  return res.json();
+  if (!res.ok) throw new Error(`Ollama embed error: ${res.status}`);
+  const data = await res.json();
+  return data.embeddings[0];
+}
+
+function vecLiteral(arr) {
+  return `[${arr.join(",")}]`;
 }
 
 const server = new McpServer({
   name: "mem0",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 server.tool(
   "add_memory",
-  "Store a new memory. Pass messages as conversation turns and optional user_id/agent_id/run_id.",
+  "Store a memory. Embeds text via Ollama and stores in pgvector.",
   {
-    messages: z
-      .array(
-        z.object({
-          role: z.enum(["user", "assistant"]),
-          content: z.string(),
-        })
-      )
-      .describe("Conversation messages to extract memory from"),
+    text: z.string().describe("Memory text to store"),
     user_id: z.string().optional().describe("User identifier"),
     agent_id: z.string().optional().describe("Agent identifier"),
-    run_id: z.string().optional().describe("Run identifier"),
     metadata: z.record(z.unknown()).optional().describe("Optional metadata"),
   },
-  async ({ messages, user_id, agent_id, run_id, metadata }) => {
-    const body = { messages };
-    if (user_id) body.user_id = user_id;
-    if (agent_id) body.agent_id = agent_id;
-    if (run_id) body.run_id = run_id;
-    if (metadata) body.metadata = metadata;
-    const data = await mem0Fetch("/memories", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+  async ({ text, user_id, agent_id, metadata }) => {
+    const vector = await embed(text);
+    const payload = { text, ...(user_id && { user_id }), ...(agent_id && { agent_id }), ...(metadata && { metadata }) };
+    const { rows } = await pool.query(
+      `INSERT INTO "${PG_TABLE}" (vector, payload) VALUES ($1::vector, $2) RETURNING id`,
+      [vecLiteral(vector), JSON.stringify(payload)]
+    );
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ id: rows[0].id, stored: true }) }],
     };
   }
 );
 
 server.tool(
   "search_memories",
-  "Semantic search across stored memories.",
+  "Semantic search across memories using Ollama embeddings + pgvector cosine similarity.",
   {
     query: z.string().describe("Search query"),
-    user_id: z.string().optional().describe("Filter by user"),
-    agent_id: z.string().optional().describe("Filter by agent"),
-    run_id: z.string().optional().describe("Filter by run"),
-    limit: z.number().optional().describe("Max results (default: 100)"),
+    user_id: z.string().optional().describe("Filter by user_id in payload"),
+    limit: z.number().optional().describe("Max results (default 10)"),
   },
-  async ({ query, user_id, agent_id, run_id, limit }) => {
-    const body = { query };
-    const filters = {};
-    if (user_id) filters.user_id = user_id;
-    if (agent_id) filters.agent_id = agent_id;
-    if (run_id) filters.run_id = run_id;
-    if (Object.keys(filters).length > 0) body.filters = filters;
-    if (limit) body.limit = limit;
-    const data = await mem0Fetch("/search", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+  async ({ query, user_id, limit }) => {
+    const vector = await embed(query);
+    const lim = limit || 10;
+    let sql = `SELECT id, payload, vector <=> $1::vector AS distance FROM "${PG_TABLE}"`;
+    const params = [vecLiteral(vector)];
+    if (user_id) {
+      params.push(user_id);
+      sql += ` WHERE payload->>'user_id' = $${params.length}`;
+    }
+    sql += ` ORDER BY distance LIMIT $${params.length + 1}`;
+    params.push(lim);
+    const { rows } = await pool.query(sql, params);
+    const results = rows.map((r) => ({
+      id: r.id,
+      memory: r.payload.text,
+      score: 1 - r.distance,
+      metadata: r.payload.metadata || {},
+      user_id: r.payload.user_id || null,
+    }));
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],
     };
   }
 );
 
 server.tool(
   "get_memories",
-  "List all stored memories with optional filters.",
+  "List stored memories.",
   {
-    user_id: z.string().optional().describe("Filter by user"),
-    agent_id: z.string().optional().describe("Filter by agent"),
-    run_id: z.string().optional().describe("Filter by run"),
+    user_id: z.string().optional().describe("Filter by user_id"),
+    limit: z.number().optional().describe("Max results (default 50)"),
   },
-  async ({ user_id, agent_id, run_id }) => {
-    const params = new URLSearchParams();
-    if (user_id) params.set("user_id", user_id);
-    if (agent_id) params.set("agent_id", agent_id);
-    if (run_id) params.set("run_id", run_id);
-    const qs = params.toString();
-    const data = await mem0Fetch(`/memories${qs ? `?${qs}` : ""}`);
+  async ({ user_id, limit }) => {
+    const lim = limit || 50;
+    let sql = `SELECT id, payload FROM "${PG_TABLE}"`;
+    const params = [];
+    if (user_id) {
+      params.push(user_id);
+      sql += ` WHERE payload->>'user_id' = $${params.length}`;
+    }
+    params.push(lim);
+    sql += ` ORDER BY id DESC LIMIT $${params.length}`;
+    const { rows } = await pool.query(sql, params);
+    const results = rows.map((r) => ({
+      id: r.id,
+      memory: r.payload.text,
+      metadata: r.payload.metadata || {},
+      user_id: r.payload.user_id || null,
+    }));
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],
     };
   }
 );
 
 server.tool(
   "get_memory",
-  "Retrieve a specific memory by ID.",
-  {
-    memory_id: z.string().describe("Memory ID"),
-  },
+  "Get a specific memory by ID.",
+  { memory_id: z.string().describe("Memory UUID") },
   async ({ memory_id }) => {
-    const data = await mem0Fetch(`/memories/${memory_id}`);
+    const { rows } = await pool.query(
+      `SELECT id, payload FROM "${PG_TABLE}" WHERE id = $1`,
+      [memory_id]
+    );
+    if (rows.length === 0) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "not found" }) }] };
+    }
+    const r = rows[0];
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{
+        type: "text",
+        text: JSON.stringify({ id: r.id, memory: r.payload.text, metadata: r.payload.metadata || {}, user_id: r.payload.user_id || null }),
+      }],
     };
   }
 );
 
 server.tool(
   "update_memory",
-  "Update a memory's text by ID.",
+  "Update a memory's text (re-embeds with Ollama).",
   {
-    memory_id: z.string().describe("Memory ID"),
+    memory_id: z.string().describe("Memory UUID"),
     text: z.string().describe("New memory text"),
   },
   async ({ memory_id, text }) => {
-    const data = await mem0Fetch(`/memories/${memory_id}`, {
-      method: "PUT",
-      body: JSON.stringify({ text }),
-    });
+    const vector = await embed(text);
+    const { rowCount } = await pool.query(
+      `UPDATE "${PG_TABLE}" SET vector = $1::vector, payload = jsonb_set(payload, '{text}', $2) WHERE id = $3`,
+      [vecLiteral(vector), JSON.stringify(text), memory_id]
+    );
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ updated: rowCount > 0, id: memory_id }) }],
     };
   }
 );
@@ -139,68 +181,72 @@ server.tool(
 server.tool(
   "delete_memory",
   "Delete a single memory by ID.",
-  {
-    memory_id: z.string().describe("Memory ID"),
-  },
+  { memory_id: z.string().describe("Memory UUID") },
   async ({ memory_id }) => {
-    const data = await mem0Fetch(`/memories/${memory_id}`, { method: "DELETE" });
+    const { rowCount } = await pool.query(
+      `DELETE FROM "${PG_TABLE}" WHERE id = $1`,
+      [memory_id]
+    );
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ deleted: rowCount > 0, id: memory_id }) }],
     };
   }
 );
 
 server.tool(
   "delete_all_memories",
-  "Delete all memories, optionally filtered by user/agent/run.",
-  {
-    user_id: z.string().optional().describe("Filter by user"),
-    agent_id: z.string().optional().describe("Filter by agent"),
-    run_id: z.string().optional().describe("Filter by run"),
-  },
-  async ({ user_id, agent_id, run_id }) => {
-    const params = new URLSearchParams();
-    if (user_id) params.set("user_id", user_id);
-    if (agent_id) params.set("agent_id", agent_id);
-    if (run_id) params.set("run_id", run_id);
-    const qs = params.toString();
-    const data = await mem0Fetch(`/memories${qs ? `?${qs}` : ""}`, {
-      method: "DELETE",
-    });
+  "Delete all memories, optionally filtered by user_id.",
+  { user_id: z.string().optional().describe("Filter by user_id") },
+  async ({ user_id }) => {
+    let sql = `DELETE FROM "${PG_TABLE}"`;
+    const params = [];
+    if (user_id) {
+      params.push(user_id);
+      sql += ` WHERE payload->>'user_id' = $${params.length}`;
+    }
+    const { rowCount } = await pool.query(sql, params);
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ deleted_count: rowCount }) }],
     };
   }
 );
 
 server.tool(
-  "memory_history",
-  "Get the change history for a specific memory.",
-  {
-    memory_id: z.string().describe("Memory ID"),
-  },
-  async ({ memory_id }) => {
-    const data = await mem0Fetch(`/memories/${memory_id}/history`);
+  "stats",
+  "Show memory count and embedding model info.",
+  {},
+  async () => {
+    const { rows } = await pool.query(`SELECT COUNT(*) as count FROM "${PG_TABLE}"`);
     return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          total_memories: parseInt(rows[0].count, 10),
+          embed_model: EMBED_MODEL,
+          embed_dims: EMBED_DIMS,
+          table: PG_TABLE,
+        }),
+      }],
     };
   }
 );
 
-const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() });
+await ensureTable();
 
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => crypto.randomUUID(),
+});
 await server.connect(transport);
 
-const PORT = parseInt(process.env.PORT || "8890", 10);
-
 const { createServer } = await import("http");
+const PORT = parseInt(process.env.PORT || "8890", 10);
 createServer((req, res) => {
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", mem0_api: MEM0_API }));
+    res.end(JSON.stringify({ status: "ok", embed_model: EMBED_MODEL, embed_dims: EMBED_DIMS }));
     return;
   }
   transport.handleRequest(req, res);
 }).listen(PORT, () => {
-  console.log(`mem0-mcp-adapter listening on http://localhost:${PORT}/mcp`);
+  console.log(`mem0-mcp listening on :${PORT}/mcp (ollama: ${OLLAMA_BASE}, embed: ${EMBED_MODEL}, dims: ${EMBED_DIMS})`);
 });
