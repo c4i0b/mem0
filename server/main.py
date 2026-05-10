@@ -106,9 +106,25 @@ POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
 POSTGRES_COLLECTION_NAME = os.environ.get("POSTGRES_COLLECTION_NAME", "memories")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH", "/app/history/history.db")
-DEFAULT_LLM_MODEL = os.environ.get("MEM0_DEFAULT_LLM_MODEL", "gpt-4.1-nano-2025-04-14")
-DEFAULT_EMBEDDER_MODEL = os.environ.get("MEM0_DEFAULT_EMBEDDER_MODEL", "text-embedding-3-small")
+DEFAULT_LLM_MODEL = os.environ.get("MEM0_DEFAULT_LLM_MODEL")
+DEFAULT_EMBEDDER_MODEL = os.environ.get("MEM0_DEFAULT_EMBEDDER_MODEL")
+
+USE_GEMINI = bool(GOOGLE_API_KEY and not OPENAI_API_KEY)
+
+if USE_GEMINI:
+    _llm_model = DEFAULT_LLM_MODEL or "gemini-2.5-flash"
+    _embedder_model = DEFAULT_EMBEDDER_MODEL or "models/gemini-embedding-001"
+    _embedding_dims = 768
+    _llm_config = {"provider": "gemini", "config": {"api_key": GOOGLE_API_KEY, "temperature": 0.2, "model": _llm_model}}
+    _embedder_config = {"provider": "gemini", "config": {"api_key": GOOGLE_API_KEY, "model": _embedder_model, "embedding_dims": _embedding_dims}}
+else:
+    _llm_model = DEFAULT_LLM_MODEL or "gpt-4.1-nano-2025-04-14"
+    _embedder_model = DEFAULT_EMBEDDER_MODEL or "text-embedding-3-small"
+    _embedding_dims = 1536
+    _llm_config = {"provider": "openai", "config": {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": _llm_model}}
+    _embedder_config = {"provider": "openai", "config": {"api_key": OPENAI_API_KEY, "model": _embedder_model}}
 
 DEFAULT_CONFIG = {
     "version": "v1.1",
@@ -121,15 +137,16 @@ DEFAULT_CONFIG = {
             "user": POSTGRES_USER,
             "password": POSTGRES_PASSWORD,
             "collection_name": POSTGRES_COLLECTION_NAME,
+            "embedding_model_dims": _embedding_dims,
         },
     },
-    "llm": {
-        "provider": "openai",
-        "config": {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": DEFAULT_LLM_MODEL},
-    },
-    "embedder": {"provider": "openai", "config": {"api_key": OPENAI_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}},
+    "llm": _llm_config,
+    "embedder": _embedder_config,
     "history_db_path": HISTORY_DB_PATH,
 }
+
+if USE_GEMINI:
+    logging.info("Using Gemini provider (LLM: %s, Embedder: %s)", _llm_model, _embedder_model)
 
 
 set_session_factory(SessionLocal)
