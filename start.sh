@@ -3,26 +3,33 @@ set -euo pipefail
 
 cd "$(dirname "$0")/server"
 
-if ! grep -q 'YOUR_GOOGLE_API_KEY_HERE' .env 2>/dev/null; then
-    : # API key is set
-else
-    echo "ERROR: Edit server/.env and replace YOUR_GOOGLE_API_KEY_HERE with your Gemini API key."
-    echo "       Get one at https://aistudio.google.com/app/apikey"
-    exit 1
+if [ ! -f .env ]; then
+  cp .env.example .env 2>/dev/null || true
 fi
+
+source .env 2>/dev/null || true
+MODEL="${EMBED_MODEL:-nomic-embed-text}"
 
 echo "Starting mem0 stack with Podman..."
 podman-compose up -d --build
 
 echo ""
-echo "Waiting for API to be ready..."
-until curl -fsS http://localhost:8888/auth/setup-status >/dev/null 2>&1; do sleep 2; done
+echo "Waiting for Ollama..."
+until podman exec mem0-dev_ollama_1 ollama list >/dev/null 2>&1; do sleep 2; done
 
-echo "Waiting for dashboard..."
-until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do sleep 2; done
+echo "Ensuring embed model is pulled ($MODEL)..."
+if ! podman exec mem0-dev_ollama_1 ollama list | grep -q "$MODEL"; then
+  echo "  Pulling $MODEL (this may take a moment on first run)..."
+  podman exec mem0-dev_ollama_1 ollama pull "$MODEL"
+fi
+echo "  Model $MODEL ready."
+
+echo ""
+echo "Waiting for MCP adapter..."
+until curl -fsS http://localhost:8890/health >/dev/null 2>&1; do sleep 2; done
 
 echo ""
 echo "Stack is ready!"
-echo "  API:        http://localhost:8888"
-echo "  Dashboard:  http://localhost:3000"
-echo "  API Docs:   http://localhost:8888/docs"
+echo "  MCP:        http://localhost:8890/mcp"
+echo "  Health:     http://localhost:8890/health"
+echo "  Embed:      $MODEL"
