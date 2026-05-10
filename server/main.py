@@ -115,7 +115,7 @@ USE_GEMINI = bool(GOOGLE_API_KEY and not OPENAI_API_KEY)
 
 if USE_GEMINI:
     _llm_model = DEFAULT_LLM_MODEL or "gemini-2.5-flash"
-    _embedder_model = DEFAULT_EMBEDDER_MODEL or "models/gemini-embedding-001"
+    _embedder_model = DEFAULT_EMBEDDER_MODEL or "models/gemini-embedding-2"
     _embedding_dims = 768
     _llm_config = {"provider": "gemini", "config": {"api_key": GOOGLE_API_KEY, "temperature": 0.2, "model": _llm_model}}
     _embedder_config = {"provider": "gemini", "config": {"api_key": GOOGLE_API_KEY, "model": _embedder_model, "embedding_dims": _embedding_dims}}
