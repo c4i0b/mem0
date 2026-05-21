@@ -15,6 +15,7 @@ from app.models import (
     User,
 )
 from app.schemas import MemoryResponse
+from app.utils.db import get_or_create_user
 from app.utils.memory import get_memory_client
 from app.utils.permissions import check_memory_access_permissions
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -223,9 +224,7 @@ async def create_memory(
     request: CreateMemoryRequest,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.user_id == request.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = get_or_create_user(db, request.user_id)
     # Get or create app
     app_obj = db.query(App).filter(App.name == request.app,
                                    App.owner_id == user.id).first()
@@ -326,6 +325,35 @@ async def create_memory(
         }
 
 
+
+
+class SearchRequest(BaseModel):
+    query: str
+    user_id: str
+    top_k: int = 10
+    threshold: float = 0.1
+
+
+@router.post("/search")
+async def search_memories(request: SearchRequest):
+    try:
+        memory_client = get_memory_client()
+        if not memory_client:
+            return {"results": [], "error": "Memory client unavailable"}
+    except Exception as e:
+        return {"results": [], "error": str(e)}
+
+    try:
+        results = memory_client.search(
+            request.query,
+            filters={"user_id": request.user_id},
+            top_k=request.top_k,
+            threshold=request.threshold,
+        )
+        return results
+    except Exception as e:
+        logging.warning(f"Search failed: {e}")
+        return {"results": [], "error": str(e)}
 
 
 # Get memory by ID

@@ -47,30 +47,50 @@ class ConfigSchema(BaseModel):
     mem0: Optional[Mem0Config] = None
 
 def get_default_configuration():
-    """Get the default configuration with sensible defaults for LLM and embedder."""
+    """Get the default configuration, seeded from environment variables."""
+    import os
+
+    llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
+    llm_model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    llm_api_key = os.environ.get("LLM_API_KEY", "env:OPENAI_API_KEY")
+    llm_base_url = os.environ.get("LLM_BASE_URL")
+
+    llm_config = {
+        "model": llm_model,
+        "temperature": 0.1,
+        "max_tokens": 2000,
+    }
+    if llm_provider == "ollama":
+        llm_config["ollama_base_url"] = os.environ.get(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        )
+    else:
+        llm_config["api_key"] = llm_api_key
+        if llm_base_url:
+            llm_config["openai_base_url"] = llm_base_url
+
+    embedder_provider = os.environ.get("EMBEDDER_PROVIDER", "openai").lower()
+    embedder_model = os.environ.get("EMBEDDER_MODEL", "text-embedding-3-small")
+    embedder_api_key = os.environ.get("EMBEDDER_API_KEY", "env:OPENAI_API_KEY")
+    embedder_base_url = os.environ.get("EMBEDDER_BASE_URL")
+
+    embedder_config = {"model": embedder_model}
+    if embedder_provider == "ollama":
+        embedder_config["ollama_base_url"] = os.environ.get(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        )
+    else:
+        embedder_config["api_key"] = embedder_api_key
+        if embedder_base_url:
+            embedder_config["openai_base_url"] = embedder_base_url
+
     return {
-        "openmemory": {
-            "custom_instructions": None
-        },
+        "openmemory": {"custom_instructions": None},
         "mem0": {
-            "llm": {
-                "provider": "openai",
-                "config": {
-                    "model": "gpt-4o-mini",
-                    "temperature": 0.1,
-                    "max_tokens": 2000,
-                    "api_key": "env:OPENAI_API_KEY"
-                }
-            },
-            "embedder": {
-                "provider": "openai",
-                "config": {
-                    "model": "text-embedding-3-small",
-                    "api_key": "env:OPENAI_API_KEY"
-                }
-            },
-            "vector_store": None
-        }
+            "llm": {"provider": llm_provider, "config": llm_config},
+            "embedder": {"provider": embedder_provider, "config": embedder_config},
+            "vector_store": None,
+        },
     }
 
 def get_config_from_db(db: Session, key: str = "main"):

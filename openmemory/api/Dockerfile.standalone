@@ -1,0 +1,25 @@
+# Stage 1: download ollama binary
+FROM python:3.12-slim AS ollama-builder
+
+RUN apt-get update && apt-get install -y curl zstd && \
+    curl -fsSL https://ollama.com/install.sh | sh && \
+    rm -rf /var/lib/apt/lists/*
+
+# Stage 2: minimal runtime image
+FROM python:3.12-slim
+
+COPY --from=ollama-builder /usr/local/bin/ollama /usr/local/bin/ollama
+
+WORKDIR /usr/src/openmemory
+
+COPY requirements.prod.txt .
+RUN pip install --no-cache-dir -r requirements.prod.txt faiss-cpu
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+COPY . .
+
+EXPOSE 8765
+
+ENTRYPOINT ["/entrypoint.sh"]

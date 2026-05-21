@@ -1,6 +1,6 @@
-# Ignore all .env files
-**/.env
-**/.env.*
+# Ignore git and CI
+.git
+.github
 
 # Ignore all database files
 **/*.db

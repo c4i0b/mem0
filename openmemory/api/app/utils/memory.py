@@ -315,7 +315,7 @@ def get_default_memory_config():
         vector_store_config = {
             "collection_name": "openmemory",
             "path": os.environ.get('FAISS_PATH'),
-            "embedding_model_dims": 1536,
+            "embedding_model_dims": int(os.environ.get('EMBEDDING_DIMS', '1536')),
             "distance_strategy": "cosine"
         }
     else:
