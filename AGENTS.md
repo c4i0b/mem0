@@ -41,6 +41,11 @@ Every file below carries custom changes. When upstream modifies these files, con
 | `openmemory/api/.env.template` | Config template (tracked in git) | Documents all env vars — copy to `~/.local/share/mem0/.env` |
 | `openmemory/api/.env` | Runtime config (NOT in git) | Lives at `~/.local/share/mem0/.env`, mounted read-only into container |
 | `start.sh` / `stop.sh` | Host-side container lifecycle | Podman run/rm wrappers |
+| `.devcontainer/` | Dev environment for offline development | Mock Ollama + OpenAI, compose with API + UI + mock services |
+| `.devcontainer/mock_services.py` | Mock server for LLM/embedder | Hash-based 768-dim embeddings, canned OpenAI chat responses |
+| `openmemory/api/tests/unit/test_overlay.py` | Fork overlay regression tests (17 tests) | Pydantic fields, config factory, categorization lazy init, data typing |
+| `openmemory/api/tests/conftest.py` | Test fixtures for integration tests | Mocked LLM + embedder, httpx AsyncClient |
+| `openmemory/api/tests/test_api.py` | API REST integration tests (8 tests) | Ping, config, memories CRUD, stats |
 
 ### Runtime Configuration (not in git, persistent in container)
 
@@ -363,6 +368,9 @@ cd openmemory/ui && npm run dev                       # Next.js frontend
 
 # Tests
 cd openmemory/api && pytest tests/                   # API tests (e.g., test_mcp_server.py)
+
+# Fork overlay regression tests (no DB, no container, no mock server)
+cd openmemory/api && pytest tests/unit/test_overlay.py --noconftest -v   # 17 tests, <1s
 ```
 
 - **API:** FastAPI + Alembic (DB migrations) + MCP server (Model Context Protocol)

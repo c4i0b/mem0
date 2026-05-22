@@ -1,0 +1,73 @@
+name: Overlay CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'openmemory/api/app/**'
+      - 'openmemory/api/tests/**'
+      - 'openmemory/api/requirements*.txt'
+      - 'openmemory/api/Dockerfile.standalone'
+      - 'openmemory/api/entrypoint.sh'
+      - 'start.sh'
+      - 'stop.sh'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'openmemory/api/app/**'
+      - 'openmemory/api/tests/**'
+      - 'openmemory/api/requirements*.txt'
+      - 'openmemory/api/Dockerfile.standalone'
+  workflow_dispatch:
+
+jobs:
+  overlay-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: openmemory/api
+        run: |
+          pip install -q -r requirements.txt
+          pip install -q pytest
+
+      - name: Run overlay regression tests
+        working-directory: openmemory/api
+        run: pytest tests/unit/test_overlay.py --noconftest -v
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: overlay-tests
+    strategy:
+      matrix:
+        python-version: ['3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: openmemory/api
+        run: |
+          pip install -q -r requirements.txt faiss-cpu
+          pip install -q pytest pytest-asyncio httpx
+
+      - name: Run API integration tests
+        working-directory: openmemory/api
+        run: pytest tests/test_api.py tests/test_mcp_server.py -v --tb=short

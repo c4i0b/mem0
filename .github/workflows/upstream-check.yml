@@ -1,0 +1,81 @@
+name: Upstream Release Check
+
+on:
+  schedule:
+    # Every Monday at 09:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new upstream releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get our current base (latest tag we've rebased onto)
+          OUR_BASE=$(git log --oneline --grep="rebase" -1 --format="%H" 2>/dev/null || echo "none")
+          
+          # Fetch upstream tags
+          git remote add upstream https://github.com/mem0ai/mem0.git 2>/dev/null || true
+          git fetch upstream --tags 2>/dev/null
+          
+          # Get latest upstream tag
+          LATEST_TAG=$(git tag -l 'v*' | sort -V | tail -1)
+          echo "Latest upstream tag: ${LATEST_TAG}"
+          
+          # Get the tag we're currently based on
+          CURRENT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
+          echo "Current base tag: ${CURRENT_TAG}"
+          
+          # Compare
+          if [ "${LATEST_TAG}" != "${CURRENT_TAG}" ]; then
+            echo "NEW_RELEASE=true" >> "$GITHUB_ENV"
+            echo "::notice::New upstream release available: ${LATEST_TAG} (current: ${CURRENT_TAG})"
+            
+            # Check if issue already exists
+            EXISTING=$(gh issue list --label "upstream-release" --state open --json number --jq '.[].number' 2>/dev/null || echo "")
+            
+            if [ -z "${EXISTING}" ]; then
+              # Ensure labels exist (ignore error if they do)
+              gh label create "upstream-release" --color "0E8A16" --description "New upstream release available" 2>/dev/null || true
+              gh label create "maintenance" --color "FBCA04" --description "Repo maintenance tasks" 2>/dev/null || true
+              
+              # Count commits behind
+              BEHIND=$(git log --oneline "${CURRENT_TAG}..${LATEST_TAG}" --openmemory/ 2>/dev/null | wc -l || echo "?")
+              
+              gh issue create \
+                --title "Upstream release ${LATEST_TAG} available" \
+                --body "New upstream release: **${LATEST_TAG}**
+
+          Current base: ${CURRENT_TAG}
+          Commits touching openmemory/: ${BEHIND}
+
+          ### Sync procedure
+          See AGENTS.md → Sync from Upstream section.
+          
+          ### Pre-flight checklist
+          - [ ] Read upstream release notes / changelog
+          - [ ] Check overlay files for conflicts: \`git diff --name-only ${CURRENT_TAG}..${LATEST_TAG} -- openmemory/\`
+          - [ ] Run overlay tests before rebase: \`pytest tests/unit/test_overlay.py --noconftest\`
+          - [ ] Create backup branch before rebase
+          - [ ] Rebuild Docker image after rebase
+          - [ ] Run smoke test (ping + memories preserved)" \
+                --label "upstream-release" \
+                --label "maintenance"
+            echo "Created issue for ${LATEST_TAG}"
+            else
+              echo "Issue already exists (#${EXISTING}), skipping"
+            fi
+          else
+            echo "Already on latest: ${LATEST_TAG}"
+          fi

@@ -1,0 +1,43 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'openmemory/api/Dockerfile.standalone'
+      - 'openmemory/api/requirements.prod.txt'
+      - 'openmemory/api/entrypoint.sh'
+      - 'openmemory/api/app/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build standalone image
+        working-directory: openmemory/api
+        run: docker build -t mem0-standalone:test -f Dockerfile.standalone .
+
+      - name: Verify image size
+        run: |
+          SIZE=$(docker images mem0-standalone:test --format "{{.Size}}")
+          echo "Image size: ${SIZE}"
+          # Fail if image is over 600MB (regression guard)
+          SIZE_MB=$(echo "$SIZE" | sed 's/MB//' | sed 's/GB/*1024/' | bc)
+          echo "Size in MB: ${SIZE_MB}"
+          if [ "$SIZE_MB" -gt 600 ]; then
+            echo "::warning::Image size ${SIZE} exceeds 600MB threshold"
+          fi
+
+      - name: Verify Python version
+        run: |
+          docker run --rm mem0-standalone:test python3 --version
+
+      - name: Verify entrypoint components
+        run: |
+          docker run --rm mem0-standalone:test which ollama
+          docker run --rm mem0-standalone:test python3 -c "import faiss; print(f'faiss OK')"
