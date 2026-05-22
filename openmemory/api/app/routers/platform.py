@@ -10,7 +10,7 @@ router = APIRouter(tags=["platform-api"])
 
 class PlatformAddRequest(BaseModel):
     messages: Optional[List[str]] = None
-    data: Optional[str] = None
+    data: Any = None
     user_id: Optional[str] = None
     agent_id: Optional[str] = None
     run_id: Optional[str] = None
@@ -128,7 +128,7 @@ async def platform_delete(request: Request):
 
 @router.get("/v1/ping/")
 async def platform_ping():
-    return {"status": "ok"}
+    return {"status": "ok", "org_id": "local", "project_id": "local", "user_email": "hermes@local"}
 
 
 def _normalize_add(result):
