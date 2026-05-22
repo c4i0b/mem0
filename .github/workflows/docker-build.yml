@@ -1,13 +1,7 @@
 name: Docker Build
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'openmemory/api/Dockerfile.standalone'
-      - 'openmemory/api/requirements.prod.txt'
-      - 'openmemory/api/entrypoint.sh'
-      - 'openmemory/api/app/**'
+  # Only on manual trigger — build takes ~8min, not worth running on every push
   workflow_dispatch:
 
 jobs:
