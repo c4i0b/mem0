@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from app.utils.memory import get_memory_client
 from fastapi import APIRouter, HTTPException, Request
@@ -10,7 +10,7 @@ router = APIRouter(tags=["platform-api"])
 
 class PlatformAddRequest(BaseModel):
     messages: Optional[List[str]] = None
-    data: Any = None
+    data: Optional[Union[str, List[Dict[str, str]]]] = None
     user_id: Optional[str] = None
     agent_id: Optional[str] = None
     run_id: Optional[str] = None
