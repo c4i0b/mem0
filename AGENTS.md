@@ -2,6 +2,122 @@
 
 This file provides context for AI coding assistants (Claude Code, Cursor, GitHub Copilot, Codex, etc.) working with the Mem0 repository.
 
+---
+
+## Fork Overlay — Self-Managed Update Layer
+
+This is a **fork of [mem0ai/mem0](https://github.com/mem0ai/mem0)** with a thin overlay of customizations for self-hosted deployment. The overlay must be preserved when syncing from upstream.
+
+### Remotes
+
+```
+origin   = git@github.com:c4i0b/mem0    (our fork)
+upstream = https://github.com/mem0ai/mem0 (vanilla upstream — ADD if missing)
+```
+
+If `upstream` remote is missing, create it:
+```bash
+git remote add upstream https://github.com/mem0ai/mem0.git
+git fetch upstream
+```
+
+### Overlay Manifest
+
+Every file below carries custom changes. When upstream modifies these files, conflicts must be resolved by merging upstream changes INTO our custom versions (not the other way around).
+
+| File | Purpose | Key Customizations |
+|------|---------|-------------------|
+| `openmemory/api/Dockerfile.standalone` | Standalone container image (Ollama + mem0) | Embeds Ollama binary, installs faiss-cpu, copies entrypoint |
+| `openmemory/api/entrypoint.sh` | Container startup | Starts Ollama → pulls embedder model → runs uvicorn |
+| `openmemory/api/app/routers/config.py` | Config API endpoints | `openai_base_url` field on `LLMConfig` and `EmbedderConfig` (upstream bugfix) |
+| `openmemory/api/app/routers/memories.py` | Memory CRUD endpoints | Flexible `data` field typing (`Union[str, List[Dict]]`) |
+| `openmemory/api/app/routers/platform.py` | Platform API router (NEW FILE) | Full custom route for Platform API compatibility |
+| `openmemory/api/app/routers/__init__.py` | Router registration | Registers `platform` router |
+| `openmemory/api/app/utils/memory.py` | Memory client factory | `get_memory_client()` with env-based config |
+| `openmemory/api/app/utils/categorization.py` | Memory categorization | Custom categorization logic |
+| `openmemory/api/main.py` | FastAPI app entry | Custom startup/lifespan |
+| `openmemory/api/requirements.prod.txt` | Python dependencies | Adds faiss-cpu, minimal deps |
+| `openmemory/api/.dockerignore` | Docker build context | Custom exclusions |
+| `openmemory/api/.env` | Runtime config (NOT in git) | LLM/Embedder/FAISS config — baked into image |
+| `start.sh` / `stop.sh` | Host-side container lifecycle | Podman run/rm wrappers |
+
+### Runtime Configuration (not in git, persistent in container)
+
+- `.env` is baked into the container image during build. To update: edit `openmemory/api/.env` → rebuild.
+- Persistent data lives at `~/.local/share/mem0/` (mounted into container):
+  - `ollama/` — Ollama model storage
+  - `data/` — FAISS index + metadata
+- Applied optimizations (via API, stored in internal DB):
+  - `custom_instructions`: domain-specific fact extraction prompt (~893 chars)
+  - `max_tokens`: 1000 (down from upstream default 2000)
+
+### Sync from Upstream
+
+When mem0ai/mem0 releases a new version, follow this procedure:
+
+```bash
+# 1. Fetch upstream
+git fetch upstream --tags
+
+# 2. Identify target version
+git log --oneline upstream/main -5   # or: git tag -l 'v*' | sort -V | tail -5
+
+# 3. Replay our overlay on top of upstream
+git rebase upstream/main             # or: git rebase <tag>
+
+# 4. Resolve conflicts — always keep our changes in overlay files
+#    For config.py: keep openai_base_url fields
+#    For platform.py: keep entire file (we own it)
+#    For other overlay files: inspect upstream diff, merge carefully
+
+# 5. Rebuild and test
+cd openmemory/api && podman build -t localhost/mem0:latest -f Dockerfile.standalone .
+cd ../.. && bash stop.sh && bash start.sh
+# Run integration test: python3 /tmp/mem0-test.py verify
+
+# 6. If .env had env-var changes upstream, update and rebuild
+# 7. Force-push to origin (since rebase rewrites history)
+git push --force-with-lease origin main
+```
+
+### Conflict Resolution Rules
+
+| Scenario | Resolution |
+|----------|------------|
+| Upstream adds fields to `LLMConfig`/`EmbedderConfig` | Keep upstream additions + keep our `openai_base_url` field |
+| Upstream modifies `memories.py` data typing | Re-apply our `Union[str, List[Dict]]` on top of upstream version |
+| Upstream touches `platform.py` | Unlikely — we own this file entirely. If upstream adds their own, merge routes |
+| Upstream changes `Dockerfile.standalone` or `entrypoint.sh` | These likely don't exist upstream — always keep ours |
+| Upstream changes `requirements.prod.txt` | Merge: keep our additions (faiss-cpu), adopt upstream dependency bumps |
+| Upstream changes `memory.py` config flow | Re-apply our `get_memory_client()` on top of upstream version |
+
+### Agent Auto-Management
+
+When working in this project, the agent should:
+
+1. **Before any changes**: Check if upstream has new releases (`git fetch upstream --tags && git tag -l 'v*' | sort -V | tail -3`). If a new version exists, notify the user and offer to sync.
+2. **When adding customizations**: Update this manifest table. New files must be listed here to survive rebase.
+3. **After rebase**: Always rebuild the container and verify with a smoke test (ping + add + search + delete).
+4. **Preserve**: Never remove `openai_base_url` from `LLMConfig`/`EmbedderConfig` — this is our critical bugfix.
+5. **Run configuration**: After rebuild, re-apply runtime config via API if DB was reset:
+   - `PUT /api/v1/config/openmemory` with `custom_instructions`
+   - `PUT /api/v1/config/mem0/llm` with `max_tokens: 1000` + `openai_base_url`
+   - Re-add personal memories from backup if needed
+
+### Overlay Commits (base reference)
+
+```
+0ab4fc16 fix: add openai_base_url to LLMConfig and EmbedderConfig
+e6dc1e6d feat: switch to embeddinggemma:300m-qat-q4_0 (239MB, 80% recall)
+0c18e199 refactor: type data field properly as Union[str, List[Dict[str, str]]] instead of Any
+a11a35c8 fix: support MemoryClient 2.x (org_id/project_id in ping, flexible add payload)
+eb41d3e5 feat: self-hosted mem0 server with Ollama embeddings and FAISS
+```
+
+These commits represent the full overlay. Use `git rebase upstream/main` to replay them.
+
+---
+
 ## Project Overview
 
 **Mem0** ("mem-zero") is an intelligent memory layer for AI agents and assistants. It provides persistent, personalized memory via both a hosted platform API and self-hosted open-source SDKs.
