@@ -1,0 +1,7 @@
+FROM python:3.13-slim
+
+WORKDIR /mock
+RUN pip install --no-cache-dir fastapi uvicorn numpy
+
+COPY mock_services.py .
+CMD ["uvicorn", "mock_services:app", "--host", "0.0.0.0", "--port", "11434"]

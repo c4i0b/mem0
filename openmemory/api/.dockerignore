@@ -23,7 +23,12 @@
 **/.coverage
 **/coverage
 
-# Ignore Docker runtime files
+# Ignore Docker files (no need inside the image)
 **/.dockerignore
 **/Dockerfile
-**/docker-compose*.yml 
+**/Dockerfile.*
+**/docker-compose*.yml
+
+# Ignore tests and docs (not needed at runtime)
+tests/
+README.md

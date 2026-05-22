@@ -1,0 +1,46 @@
+services:
+  mock-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:11434/api/tags')"]
+      interval: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../openmemory/api
+      dockerfile: ../../.devcontainer/Dockerfile.api.dev
+    ports:
+      - "8765:8765"
+    volumes:
+      - ../openmemory/api:/workspace/api
+      - api-data:/data
+    env_file:
+      - api.env
+    depends_on:
+      mock-server:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8765 --reload --reload-dir /workspace/api
+
+  ui:
+    build:
+      context: ../openmemory/ui
+      dockerfile: ../../.devcontainer/Dockerfile.ui.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../openmemory/ui:/workspace/ui
+      - ui-node-modules:/workspace/ui/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8765
+    profiles:
+      - ui
+    command: pnpm dev
+
+volumes:
+  api-data:
+  ui-node-modules:

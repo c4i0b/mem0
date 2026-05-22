@@ -14,7 +14,7 @@ COPY --from=ollama-builder /usr/local/bin/ollama /usr/local/bin/ollama
 WORKDIR /usr/src/openmemory
 
 COPY requirements.prod.txt .
-RUN pip install --no-cache-dir -r requirements.prod.txt faiss-cpu && \
+RUN pip install --no-cache-dir -r requirements.prod.txt && \
     find /usr/local -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; \
     find /usr/local -type f -name '*.pyc' -delete 2>/dev/null; \
     find /usr/local -type f -name '*.pyo' -delete 2>/dev/null; \
