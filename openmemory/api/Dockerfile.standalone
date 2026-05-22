@@ -1,19 +1,24 @@
-# Stage 1: download ollama binary
-FROM python:3.12-slim AS ollama-builder
+# Stage 1: download ollama binary (discarded after build)
+FROM debian:bookworm-slim AS ollama-builder
 
-RUN apt-get update && apt-get install -y curl zstd && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates zstd && \
     curl -fsSL https://ollama.com/install.sh | sh && \
     rm -rf /var/lib/apt/lists/*
 
-# Stage 2: minimal runtime image
-FROM python:3.12-slim
+# Stage 2: minimal runtime
+FROM python:3.13-slim
 
 COPY --from=ollama-builder /usr/local/bin/ollama /usr/local/bin/ollama
 
 WORKDIR /usr/src/openmemory
 
 COPY requirements.prod.txt .
-RUN pip install --no-cache-dir -r requirements.prod.txt faiss-cpu
+RUN pip install --no-cache-dir -r requirements.prod.txt faiss-cpu && \
+    find /usr/local -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; \
+    find /usr/local -type f -name '*.pyc' -delete 2>/dev/null; \
+    find /usr/local -type f -name '*.pyo' -delete 2>/dev/null; \
+    rm -rf /root/.cache
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -22,9 +27,8 @@ COPY . .
 
 EXPOSE 8765
 
-# .env is NOT baked into the image (blocked by .dockerignore for security).
-# It is mounted at runtime via start.sh as /usr/src/openmemory/.env.
-# Build-time default env vars:
-ENV EMBEDDER_MODEL=embeddinggemma:300m-qat-q4_0
+ENV EMBEDDER_MODEL=embeddinggemma:300m-qat-q4_0 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["/entrypoint.sh"]
