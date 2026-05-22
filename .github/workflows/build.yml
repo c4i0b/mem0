@@ -1,4 +1,4 @@
-name: Docker Build
+name: Build
 
 on:
   # Only on manual trigger — build takes ~8min, not worth running on every push
