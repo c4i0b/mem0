@@ -2,6 +2,12 @@
 .git
 .github
 
+# Ignore environment files (contain API keys)
+**/.env
+**/.env.*
+.env
+.env.*
+
 # Ignore all database files
 **/*.db
 **/*.sqlite

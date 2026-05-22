@@ -37,14 +37,16 @@ Every file below carries custom changes. When upstream modifies these files, con
 | `openmemory/api/app/utils/categorization.py` | Memory categorization | Custom categorization logic |
 | `openmemory/api/main.py` | FastAPI app entry | Custom startup/lifespan |
 | `openmemory/api/requirements.prod.txt` | Python dependencies | Adds faiss-cpu, minimal deps |
-| `openmemory/api/.dockerignore` | Docker build context | Custom exclusions |
-| `openmemory/api/.env` | Runtime config (NOT in git) | LLM/Embedder/FAISS config — baked into image |
+| `openmemory/api/.dockerignore` | Docker build context | Custom exclusions + `.env` security block |
+| `openmemory/api/.env.template` | Config template (tracked in git) | Documents all env vars — copy to `~/.local/share/mem0/.env` |
+| `openmemory/api/.env` | Runtime config (NOT in git) | Lives at `~/.local/share/mem0/.env`, mounted read-only into container |
 | `start.sh` / `stop.sh` | Host-side container lifecycle | Podman run/rm wrappers |
 
 ### Runtime Configuration (not in git, persistent in container)
 
-- `.env` is baked into the container image during build. To update: edit `openmemory/api/.env` → rebuild.
+- `.env` is now mounted at runtime (not baked into image). Lives at `~/.local/share/mem0/.env`. Template at `openmemory/api/.env.template`.
 - Persistent data lives at `~/.local/share/mem0/` (mounted into container):
+  - `.env` — runtime config (mounted read-only into container)
   - `ollama/` — Ollama model storage
   - `data/` — FAISS index + metadata
 - Applied optimizations (via API, stored in internal DB):
@@ -56,7 +58,13 @@ Every file below carries custom changes. When upstream modifies these files, con
 When mem0ai/mem0 releases a new version, follow this procedure:
 
 ```bash
+# 0. Pre-flight checks
+git status --short           # MUST be clean before rebase
+git stash                    # stash any uncommitted work
+git branch pre-rebase-$(date +%Y%m%d)  # backup branch
+
 # 1. Fetch upstream
+git remote add upstream https://github.com/mem0ai/mem0.git 2>/dev/null  # idempotent
 git fetch upstream --tags
 
 # 2. Identify target version
@@ -65,7 +73,7 @@ git log --oneline upstream/main -5   # or: git tag -l 'v*' | sort -V | tail -5
 # 3. Replay our overlay on top of upstream
 git rebase upstream/main             # or: git rebase <tag>
 
-# 4. Resolve conflicts — always keep our changes in overlay files
+# 4. Resolve conflicts — see Conflict Resolution Rules table below
 #    For config.py: keep openai_base_url fields
 #    For platform.py: keep entire file (we own it)
 #    For other overlay files: inspect upstream diff, merge carefully
@@ -75,9 +83,15 @@ cd openmemory/api && podman build -t localhost/mem0:latest -f Dockerfile.standal
 cd ../.. && bash stop.sh && bash start.sh
 # Run integration test: python3 /tmp/mem0-test.py verify
 
-# 6. If .env had env-var changes upstream, update and rebuild
-# 7. Force-push to origin (since rebase rewrites history)
+# 6. Check for dependency drift
+diff openmemory/api/requirements.prod.txt <(git show upstream/main:openmemory/api/requirements.txt 2>/dev/null)
+
+# 7. If .env needs new vars, update ~/.local/share/mem0/.env
+# 8. Force-push to origin (since rebase rewrites history)
 git push --force-with-lease origin main
+
+# 9. Cleanup backup branch (optional)
+# git branch -d pre-rebase-$(date +%Y%m%d)
 ```
 
 ### Conflict Resolution Rules
@@ -85,11 +99,15 @@ git push --force-with-lease origin main
 | Scenario | Resolution |
 |----------|------------|
 | Upstream adds fields to `LLMConfig`/`EmbedderConfig` | Keep upstream additions + keep our `openai_base_url` field |
+| Upstream modifies `get_default_configuration()` in `config.py` | Keep our env-var-driven version — upstream may replace with hardcoded defaults |
 | Upstream modifies `memories.py` data typing | Re-apply our `Union[str, List[Dict]]` on top of upstream version |
 | Upstream touches `platform.py` | Unlikely — we own this file entirely. If upstream adds their own, merge routes |
 | Upstream changes `Dockerfile.standalone` or `entrypoint.sh` | These likely don't exist upstream — always keep ours |
 | Upstream changes `requirements.prod.txt` | Merge: keep our additions (faiss-cpu), adopt upstream dependency bumps |
 | Upstream changes `memory.py` config flow | Re-apply our `get_memory_client()` on top of upstream version |
+| Upstream changes `categorization.py` | Keep our lazy-init `_get_client()` pattern — survives missing OPENAI_API_KEY |
+| Upstream changes `.dockerignore` | Keep our version — includes `.env` exclusion for security |
+| Dependency drift in `requirements.txt` vs `requirements.prod.txt` | Periodically diff; adopt upstream security patches into our minimal dep file |
 
 ### Agent Auto-Management
 
