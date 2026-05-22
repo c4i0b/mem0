@@ -12,8 +12,9 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-echo "entrypoint: pulling nomic-embed-text..."
-ollama pull nomic-embed-text
+EMBEDDER_MODEL="${EMBEDDER_MODEL:-nomic-embed-text}"
+echo "entrypoint: pulling ${EMBEDDER_MODEL}..."
+ollama pull "${EMBEDDER_MODEL}"
 echo "entrypoint: model ready"
 
 exec uvicorn main:app --host 0.0.0.0 --port 8765

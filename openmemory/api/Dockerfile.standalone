@@ -22,4 +22,6 @@ COPY . .
 
 EXPOSE 8765
 
+ENV EMBEDDER_MODEL=embeddinggemma:300m-qat-q4_0
+
 ENTRYPOINT ["/entrypoint.sh"]
