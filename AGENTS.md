@@ -43,9 +43,9 @@ Every file below carries custom changes. When upstream modifies these files, con
 | `start.sh` / `stop.sh` | Host-side container lifecycle | Podman run/rm wrappers |
 | `.devcontainer/` | Dev environment for offline development | Mock Ollama + OpenAI, compose with API + UI + mock services |
 | `.devcontainer/mock_services.py` | Mock server for LLM/embedder | Hash-based 768-dim embeddings, canned OpenAI chat responses |
-| `openmemory/api/tests/unit/test_overlay.py` | Fork overlay regression tests (17 tests) | Pydantic fields, config factory, categorization lazy init, data typing |
+| `openmemory/api/tests/unit/test_overlay.py` | Fork overlay regression tests | Pydantic fields, config factory, categorization lazy init, data typing |
 | `openmemory/api/tests/conftest.py` | Test fixtures for integration tests | Mocked LLM + embedder, httpx AsyncClient |
-| `openmemory/api/tests/test_api.py` | API REST integration tests (8 tests) | Ping, config, memories CRUD, stats |
+| `openmemory/api/tests/test_api.py` | API REST integration tests | Ping, config, memories CRUD, stats |
 
 ### Runtime Configuration (not in git, persistent in container)
 
@@ -55,7 +55,7 @@ Every file below carries custom changes. When upstream modifies these files, con
   - `ollama/` — Ollama model storage
   - `data/` — FAISS index + metadata
 - Applied optimizations (via API, stored in internal DB):
-  - `custom_instructions`: domain-specific fact extraction prompt (~893 chars)
+  - `custom_instructions`: domain-specific fact extraction prompt
   - `max_tokens`: 1000 (down from upstream default 2000)
 
 ### Sync from Upstream
@@ -370,7 +370,7 @@ cd openmemory/ui && npm run dev                       # Next.js frontend
 cd openmemory/api && pytest tests/                   # API tests (e.g., test_mcp_server.py)
 
 # Fork overlay regression tests (no DB, no container, no mock server)
-cd openmemory/api && pytest tests/unit/test_overlay.py --noconftest -v   # 17 tests, <1s
+cd openmemory/api && pytest tests/unit/test_overlay.py --noconftest -v
 ```
 
 - **API:** FastAPI + Alembic (DB migrations) + MCP server (Model Context Protocol)
@@ -501,13 +501,13 @@ cd <package> && pnpm run typecheck    # or: tsc --noEmit
 
 The SDK uses a consistent plugin architecture across 5 categories. Each category has a `base.py` abstract class and concrete provider implementations:
 
-| Category | Count | Examples |
-|----------|-------|---------|
-| **LLMs** | 24 | OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Gemini, Groq, Ollama, Together, DeepSeek, vLLM, LiteLLM, LM Studio, xAI |
-| **Vector Stores** | 30 | Qdrant, Pinecone, Chroma, Weaviate, Milvus, MongoDB, Redis, Elasticsearch, pgvector, Supabase, Faiss, S3 Vectors |
-| **Embeddings** | 15 | OpenAI, Azure OpenAI, Gemini, HuggingFace, FastEmbed, Together, AWS Bedrock, Ollama, Vertex AI |
-| **Graph Stores** | 4 | Neo4j, Memgraph, Kuzu, Apache AGE |
-| **Rerankers** | 5 | Cohere, HuggingFace, LLM-based, Sentence Transformer, Zero Entropy |
+| Category | Examples |
+|----------|---------|
+| **LLMs** | OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Gemini, Groq, Ollama, Together, DeepSeek, vLLM, LiteLLM, LM Studio, xAI |
+| **Vector Stores** | Qdrant, Pinecone, Chroma, Weaviate, Milvus, MongoDB, Redis, Elasticsearch, pgvector, Supabase, Faiss, S3 Vectors |
+| **Embeddings** | OpenAI, Azure OpenAI, Gemini, HuggingFace, FastEmbed, Together, AWS Bedrock, Ollama, Vertex AI |
+| **Graph Stores** | Neo4j, Memgraph, Kuzu, Apache AGE |
+| **Rerankers** | Cohere, HuggingFace, LLM-based, Sentence Transformer, Zero Entropy |
 
 ### Two Usage Modes
 
@@ -523,7 +523,7 @@ Model Context Protocol support in multiple places:
 
 - **Remote:** MCP server at `mcp.mem0.ai`
 - **Local:** MCP server in `openmemory/api/` (FastAPI-based)
-- **Plugin:** MCP tools in `mem0-plugin/` — 9 tools: `add_memory`, `search_memories`, `get_memories`, `get_memory`, `update_memory`, `delete_memory`, `delete_all_memories`, `delete_entities`, `list_entities`
+- **Plugin:** MCP tools in `mem0-plugin/` — `add_memory`, `search_memories`, `get_memories`, `get_memory`, `update_memory`, `delete_memory`, `delete_all_memories`, `delete_entities`, `list_entities`
 
 ### Plugin & Skills System
 
